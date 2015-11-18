@@ -9,21 +9,34 @@
 import sys
 import locale
 
-from optparse import OptionParser
-
 import mutagen
 import mutagen.id3
+from mutagen._compat import PY3, text_type
+from mutagen._toolsutil import SignalHandler, get_win32_unicode_argv, print_, \
+    fsnative as fsn, OptionParser
 
 
 VERSION = (0, 3)
+_sig = SignalHandler()
 
 
-def getpreferredencoding(*args):
-    return locale.getpreferredencoding(*args) or "utf-8"
+def getpreferredencoding():
+    return locale.getpreferredencoding() or "utf-8"
 
 
 def isascii(string):
-    return not string or ord(max(string)) < 128
+    """Checks whether a unicode string is non-empty and contains only ASCII
+    characters.
+    """
+    if not string:
+        return False
+
+    try:
+        string.encode('ascii')
+    except UnicodeEncodeError:
+        return False
+
+    return True
 
 
 class ID3OptionParser(OptionParser):
@@ -55,58 +68,58 @@ def update(options, filenames):
         return uni.encode('iso-8859-1').decode(encoding)
 
     for filename in filenames:
-        if verbose != "quiet":
-            print("Updating", filename)
-
-        if has_id3v1(filename) and not noupdate and force_v1:
-            mutagen.id3.delete(filename, False, True)
-
-        try:
-            id3 = mutagen.id3.ID3(filename)
-        except mutagen.id3.ID3NoHeaderError:
+        with _sig.block():
             if verbose != "quiet":
-                print("No ID3 header found; skipping...")
-            continue
-        except Exception as err:
-            print >>sys.stderr, str(err)
-            continue
+                print_(u"Updating", filename)
 
-        for tag in filter(lambda t: t.startswith(("T", "COMM")), id3):
-            frame = id3[tag]
-            if isinstance(frame, mutagen.id3.TimeStampTextFrame):
-                # non-unicode fields
-                continue
+            if has_id3v1(filename) and not noupdate and force_v1:
+                mutagen.id3.delete(filename, False, True)
+
             try:
-                text = frame.text
-            except AttributeError:
+                id3 = mutagen.id3.ID3(filename)
+            except mutagen.id3.ID3NoHeaderError:
+                if verbose != "quiet":
+                    print_(u"No ID3 header found; skipping...")
                 continue
-            try:
-                text = map(conv, frame.text)
-            except (UnicodeError, LookupError):
+            except Exception as err:
+                print_(text_type(err), file=sys.stderr)
                 continue
-            else:
-                frame.text = text
-                if not text or min(map(isascii, text)):
-                    frame.encoding = 3
+
+            for tag in filter(lambda t: t.startswith(("T", "COMM")), id3):
+                frame = id3[tag]
+                if isinstance(frame, mutagen.id3.TimeStampTextFrame):
+                    # non-unicode fields
+                    continue
+                try:
+                    text = frame.text
+                except AttributeError:
+                    continue
+                try:
+                    text = [conv(x) for x in frame.text]
+                except (UnicodeError, LookupError):
+                    continue
                 else:
-                    frame.encoding = 1
+                    frame.text = text
+                    if not text or min(map(isascii, text)):
+                        frame.encoding = 3
+                    else:
+                        frame.encoding = 1
 
-        enc = getpreferredencoding()
-        if verbose == "debug":
-            print(id3.pprint().encode(enc, "replace"))
+            if verbose == "debug":
+                print_(id3.pprint())
 
-        if not noupdate:
-            if remove_v1:
-                id3.save(filename, v1=False)
-            else:
-                id3.save(filename)
+            if not noupdate:
+                if remove_v1:
+                    id3.save(filename, v1=False)
+                else:
+                    id3.save(filename)
 
 
 def has_id3v1(filename):
     try:
         f = open(filename, 'rb+')
         f.seek(-128, 2)
-        return f.read(3) == "TAG"
+        return f.read(3) == b"TAG"
     except IOError:
         return False
 
@@ -134,11 +147,11 @@ def main(argv):
         "-d", "--debug", action="store_const", dest="verbose",
         const="debug", help="Output updated tags")
 
-    for i, arg in enumerate(sys.argv):
+    for i, arg in enumerate(argv):
         if arg == "-v1":
-            sys.argv[i] = "--force-v1"
+            argv[i] = fsn(u"--force-v1")
         elif arg == "-removev1":
-            sys.argv[i] = "--remove-v1"
+            argv[i] = fsn(u"--remove-v1")
 
     (options, args) = parser.parse_args(argv[1:])
 
@@ -148,4 +161,6 @@ def main(argv):
         parser.print_help()
 
 if __name__ == "__main__":
-    main(sys.argv)
+    argv = get_win32_unicode_argv()
+    _sig.init()
+    main(argv)

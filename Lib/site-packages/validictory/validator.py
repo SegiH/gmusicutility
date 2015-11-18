@@ -15,70 +15,78 @@ else:
 
 
 class SchemaError(ValueError):
-    """
-    errors encountered in processing a schema (subclass of :class:`ValueError`)
-    """
+    """ errors encountered in processing a schema (subclass of :class:`ValueError`) """
 
 
 class ValidationError(ValueError):
-    """
-    validation errors encountered during validation (subclass of
-    :class:`ValueError`)
-    """
+    """ validation errors encountered during validation (subclass of :class:`ValueError`) """
 
 
 class FieldValidationError(ValidationError):
     """
-    validation error that refers to a specific field
-    Includes `fieldname` and `value` attributes.
+    Validation error that refers to a specific field and has `fieldname` and `value` attributes.
     """
-    def __init__(self, message, fieldname, value):
+    def __init__(self, message, fieldname, value, path=''):
+        message = "Value {!r} for field '{}' {}".format(value, path, message)
         super(FieldValidationError, self).__init__(message)
         self.fieldname = fieldname
         self.value = value
+
+
+class DependencyValidationError(ValidationError):
+    """
+    Validation error that refers to a missing dependency
+    """
+    def __init__(self, message):
+        super(DependencyValidationError, self).__init__(message)
+
+
+class RequiredFieldValidationError(ValidationError):
+    """
+    Validation error that refers to a missing field
+    """
+    def __init__(self, message):
+        super(RequiredFieldValidationError, self).__init__(message)
+
+
+class MultipleValidationError(ValidationError):
+    def __init__(self, errors):
+        msg = "{} validation errors:\n{}".format(len(errors), '\n'.join(str(e) for e in errors))
+        super(MultipleValidationError, self).__init__(msg)
+        self.errors = errors
 
 
 def _generate_datetime_validator(format_option, dateformat_string):
     def validate_format_datetime(validator, fieldname, value, format_option):
         try:
             datetime.strptime(value, dateformat_string)
-        except ValueError:
-            raise FieldValidationError(
-                "Value %(value)r of field '%(fieldname)s' is not in "
-                "'%(format_option)s' format" % locals(), fieldname, value)
+        except:
+            msg = "is not in '{format_option}' format"
+            raise FieldValidationError(msg.format(format_option=format_option), fieldname, value)
 
     return validate_format_datetime
 
-validate_format_date_time = _generate_datetime_validator('date-time',
-                                                         '%Y-%m-%dT%H:%M:%SZ')
+validate_format_date_time = _generate_datetime_validator('date-time', '%Y-%m-%dT%H:%M:%SZ')
 validate_format_date = _generate_datetime_validator('date', '%Y-%m-%d')
 validate_format_time = _generate_datetime_validator('time', '%H:%M:%S')
 
 
 def validate_format_utc_millisec(validator, fieldname, value, format_option):
-    if not isinstance(value, _int_types + (float, Decimal)):
-        raise FieldValidationError("Value %(value)r of field '%(fieldname)s' "
-                                   "is not a number" % locals(), fieldname,
-                                   value)
-
-    if not value > 0:
-        raise FieldValidationError("Value %(value)r of field '%(fieldname)s' "
-                                   " is not a positive number" % locals(),
-                                   fieldname, value)
+    if not isinstance(value, _int_types + (float, Decimal)) or value <= 0:
+        msg = "is not a positive number"
+        raise FieldValidationError(msg, fieldname, value)
 
 
 def validate_format_ip_address(validator, fieldname, value, format_option):
     try:
+        # Make sure we expect "X.X.X.X" as socket.inet_aton() converts "1" to "0.0.0.1"
         socket.inet_aton(value)
-        # Make sure we expect "X.X.X.X" as socket.inet_aton() converts "1"
-        # to "0.0.0.1"
         ip = len(value.split('.')) == 4
     except:
         ip = False
     if not ip:
-        raise FieldValidationError("Value %(value)r of field '%(fieldname)s'"
-                                   "is not a ip-address" % locals(), fieldname,
-                                   value)
+        msg = "is not a ip-address"
+        raise FieldValidationError(msg, fieldname, value)
 
 
 DEFAULT_FORMAT_VALIDATORS = {
@@ -108,9 +116,10 @@ class SchemaValidator(object):
 
     def __init__(self, format_validators=None, required_by_default=True,
                  blank_by_default=False, disallow_unknown_properties=False,
-                 apply_default_to_data=False):
+                 apply_default_to_data=False, fail_fast=True):
 
         self._format_validators = {}
+        self._errors = []
 
         # add the default format validators
         for key, value in DEFAULT_FORMAT_VALIDATORS.items():
@@ -124,6 +133,7 @@ class SchemaValidator(object):
         self.blank_by_default = blank_by_default
         self.disallow_unknown_properties = disallow_unknown_properties
         self.apply_default_to_data = apply_default_to_data
+        self.fail_fast = fail_fast
 
     def register_format_validator(self, format_name, format_validator_fun):
         self._format_validators[format_name] = format_validator_fun
@@ -141,8 +151,7 @@ class SchemaValidator(object):
         return type(val) == bool
 
     def validate_type_object(self, val):
-        return isinstance(val, Mapping) or (hasattr(val, 'keys')
-                                            and hasattr(val, 'items'))
+        return isinstance(val, Mapping) or (hasattr(val, 'keys') and hasattr(val, 'items'))
 
     def validate_type_array(self, val):
         return isinstance(val, (list, tuple))
@@ -153,30 +162,32 @@ class SchemaValidator(object):
     def validate_type_any(self, val):
         return True
 
-    def _error(self, desc, value, fieldname, **params):
+    def _error(self, desc, value, fieldname, exctype=FieldValidationError, path='', **params):
         params['value'] = value
         params['fieldname'] = fieldname
-        message = desc % params
-        raise FieldValidationError(message, fieldname, value)
+        message = desc.format(**params)
+
+        if exctype == FieldValidationError:
+            err = FieldValidationError(message, fieldname, value, path)
+        elif exctype == DependencyValidationError or exctype == RequiredFieldValidationError:
+            err = exctype(message)
+
+        if self.fail_fast:
+            raise err
+        else:
+            self._errors.append(err)
 
     def _validate_unknown_properties(self, schema, data, fieldname):
         schema_properties = set(schema)
         data_properties = set(data)
         delta = data_properties - schema_properties
         if delta:
-            unknowns = ''
-            for x in delta:
-                unknowns += '"%s", ' % x
-            unknowns = unknowns.rstrip(", ")
-            raise SchemaError('Unknown properties for field '
-                              '"%(fieldname)s": %(unknowns)s' %
-                              locals())
+            unknowns = ', '.join(['"{}"'.format(x) for x in delta])
+            raise SchemaError('Unknown properties for field "{fieldname}": {unknowns}'.format(
+                fieldname=fieldname, unknowns=unknowns))
 
-    def validate_type(self, x, fieldname, schema, fieldtype=None):
-        '''
-        Validates that the fieldtype specified is correct for the given
-        data
-        '''
+    def validate_type(self, x, fieldname, schema, path, fieldtype=None):
+        ''' Validates that the fieldtype specified is correct for the given data '''
 
         # We need to know if the field exists or if it's just Null
         fieldexists = True
@@ -193,123 +204,93 @@ class SchemaValidator(object):
                 errorlist = []
                 for eachtype in fieldtype:
                     try:
-                        self.validate_type(x, fieldname, eachtype, eachtype)
+                        self.validate_type(x, fieldname, eachtype, path, eachtype)
                         datavalid = True
                         break
                     except ValidationError as err:
                         errorlist.append(err)
                 if not datavalid:
-                    self._error("Value %(value)r for field '%(fieldname)s' "
-                                "doesn't match any of %(numsubtypes)d "
-                                "subtypes in %(fieldtype)s; "
-                                "errorlist = %(errorlist)r",
-                                value, fieldname, numsubtypes=len(fieldtype),
+                    self._error("doesn't match any of {numsubtypes} subtypes in {fieldtype}; "
+                                "errorlist = {errorlist!r}",
+                                value, fieldname, path=path, numsubtypes=len(fieldtype),
                                 fieldtype=fieldtype, errorlist=errorlist)
             elif isinstance(fieldtype, dict):
                 try:
-                    self.__validate(fieldname, x, fieldtype)
+                    self.__validate(fieldname, x, fieldtype, path)
                 except ValueError as e:
                     raise e
             else:
                 try:
-                    type_checker = getattr(self, 'validate_type_%s' %
-                                           fieldtype)
+                    type_checker = getattr(self, 'validate_type_' + fieldtype)
                 except AttributeError:
-                    raise SchemaError("Field type '%s' is not supported." %
-                                      fieldtype)
+                    raise SchemaError("Field type '{}' is not supported.".format(fieldtype))
 
                 if not type_checker(value):
-                    self._error("Value %(value)r for field '%(fieldname)s' "
-                                "is not of type %(fieldtype)s",
-                                value, fieldname, fieldtype=fieldtype)
+                    self._error("is not of type {fieldtype}", value, fieldname, path=path,
+                                fieldtype=fieldtype)
 
-    def validate_properties(self, x, fieldname, schema, properties=None):
-        '''
-        Validates properties of a JSON object by processing the object's
-        schema recursively
-        '''
-        if x.get(fieldname) is not None:
-            value = x.get(fieldname)
+    def validate_properties(self, x, fieldname, schema, path, properties=None):
+        ''' Validates properties of a JSON object by processing the object's schema recursively '''
+        value = x.get(fieldname)
+        if value is not None:
             if isinstance(value, dict):
                 if isinstance(properties, dict):
 
                     if self.disallow_unknown_properties:
-                        self._validate_unknown_properties(properties, value,
-                                                          fieldname)
+                        self._validate_unknown_properties(properties, value, fieldname)
 
                     for eachProp in properties:
-                        self.__validate(eachProp, value,
-                                        properties.get(eachProp))
+                        self.__validate(eachProp, value, properties.get(eachProp),
+                                        path + '.' + eachProp)
                 else:
-                    raise SchemaError("Properties definition of field '%s' is "
-                                      "not an object" % fieldname)
+                    raise SchemaError("Properties definition of field '{}' is not an object"
+                                      .format(fieldname))
 
-    def validate_items(self, x, fieldname, schema, items=None):
+    def validate_items(self, x, fieldname, schema, path, items=None):
         '''
-        Validates that all items in the list for the given field match the
-        given schema
+        Validates that all items in the list for the given field match the given schema
         '''
         if x.get(fieldname) is not None:
             value = x.get(fieldname)
             if isinstance(value, (list, tuple)):
                 if isinstance(items, (list, tuple)):
-                    if (not 'additionalItems' in schema and
-                            len(items) != len(value)):
-                        self._error("Length of list %(value)r for field "
-                                    "'%(fieldname)s' is not equal to length "
-                                    "of schema list", value, fieldname)
+                    if 'additionalItems' not in schema and len(items) != len(value):
+                        self._error("is not of same length as schema list", value, fieldname,
+                                    path=path)
                     else:
-                        for itemIndex in range(len(items)):
+                        for index, item in enumerate(items):
                             try:
-                                self.validate(value[itemIndex],
-                                              items[itemIndex])
+                                self.__validate("_data", {"_data": value[index]}, item,
+                                                '{}[{}]'.format(path, index))
                             except FieldValidationError as e:
-                                raise type(e)("Failed to validate field '%s' "
-                                              "list schema: %s" %
-                                              (fieldname, e), fieldname,
-                                              e.value)
+                                raise type(e)("Failed to validate field '%s' list schema: %s" %
+                                              (fieldname, e), fieldname, e.value)
                 elif isinstance(items, dict):
-                    for eachItem in value:
-                        if (self.disallow_unknown_properties and
-                                'properties' in items):
-                            self._validate_unknown_properties(
-                                items['properties'], eachItem, fieldname)
+                    for index, item in enumerate(value):
+                        if self.disallow_unknown_properties and 'properties' in items:
+                            self._validate_unknown_properties(items['properties'], item,
+                                                              fieldname)
 
-                        try:
-                            self._validate(eachItem, items)
-                        except FieldValidationError as e:
-                            # a bit of a hack: replace reference to _data
-                            # with 'list item' so error messages make sense
-                            old_error = str(e).replace("field '_data'",
-                                                       'list item')
-                            raise type(e)("Failed to validate field '%s' list "
-                                          "schema: %s" %
-                                          (fieldname, old_error), fieldname,
-                                          e.value)
+                        self.__validate("[list item]", {"[list item]": item}, items,
+                                        '{}[{}]'.format(path, index))
                 else:
-                    raise SchemaError("Properties definition of field '%s' is "
-                                      "not a list or an object" % fieldname)
+                    raise SchemaError("Properties definition of field '{}' is "
+                                      "not a list or an object".format(fieldname))
 
-    def validate_required(self, x, fieldname, schema, required):
-        '''
-        Validates that the given field is present if required is True
-        '''
+    def validate_required(self, x, fieldname, schema, path, required):
+        ''' Validates that the given field is present if required is True '''
         # Make sure the field is present
         if fieldname not in x and required:
-            self._error("Required field '%(fieldname)s' is missing",
-                        None, fieldname)
+            self._error("Required field '{fieldname}' is missing", None, fieldname, path=path,
+                        exctype=RequiredFieldValidationError)
 
-    def validate_blank(self, x, fieldname, schema, blank=False):
-        '''
-        Validates that the given field is not blank if blank=False
-        '''
+    def validate_blank(self, x, fieldname, schema, path, blank=False):
+        ''' Validates that the given field is not blank if blank=False '''
         value = x.get(fieldname)
         if isinstance(value, _str_type) and not blank and not value:
-            self._error("Value %(value)r for field '%(fieldname)s' cannot be "
-                        "blank'", value, fieldname)
+            self._error("cannot be blank'", value, fieldname, path=path)
 
-    def validate_patternProperties(self, x, fieldname, schema,
-                                   patternproperties=None):
+    def validate_patternProperties(self, x, fieldname, schema, path, patternproperties=None):
 
         if patternproperties is None:
             patternproperties = {}
@@ -319,10 +300,9 @@ class SchemaValidator(object):
         for pattern, schema in patternproperties.items():
             for key, value in value_obj.items():
                 if re.match(pattern, key):
-                    self.validate(value, schema)
+                    self.__validate("_data", {"_data": value}, schema, path)
 
-    def validate_additionalItems(self, x, fieldname, schema,
-                                 additionalItems=False):
+    def validate_additionalItems(self, x, fieldname, schema, path, additionalItems=False):
         value = x.get(fieldname)
 
         if not isinstance(value, (list, tuple)):
@@ -332,16 +312,13 @@ class SchemaValidator(object):
             if additionalItems or 'items' not in schema:
                 return
             elif len(value) != len(schema['items']):
-                self._error("Length of list %(value)r for field "
-                            "'%(fieldname)s' is not equal to length of schema "
-                            "list", value, fieldname)
+                self._error("is not of same length as schema list", value, fieldname, path=path)
 
         remaining = value[len(schema['items']):]
         if len(remaining) > 0:
-            self._validate(remaining, {'items': additionalItems})
+            self.__validate("_data", {"_data": remaining}, {"items": additionalItems}, path)
 
-    def validate_additionalProperties(self, x, fieldname, schema,
-                                      additionalProperties=None):
+    def validate_additionalProperties(self, x, fieldname, schema, path, additionalProperties=None):
         '''
         Validates additional properties of a JSON object that were not
         specifically defined by the properties property
@@ -366,24 +343,20 @@ class SchemaValidator(object):
             if value is None:
                 value = {}
             for eachProperty in value:
-                if eachProperty not in properties and not \
-                   any(re.match(p, eachProperty) for p in patterns):
+                if (eachProperty not in properties and not
+                        any(re.match(p, eachProperty) for p in patterns)):
                     # If additionalProperties is the boolean value False
                     # then we don't accept any additional properties.
-                    if (isinstance(additionalProperties, bool) and not
-                            additionalProperties):
-                        self._error("additional property '%(prop)s' "
-                                    "not defined by 'properties' or "
-                                    "'patternProperties' are not "
-                                    "allowed in field '%(fieldname)s'",
-                                    None, fieldname, prop=eachProperty)
-                    self.__validate(eachProperty, value,
-                                    additionalProperties)
+                    if additionalProperties is False:
+                        self._error("contains additional property '{prop}' not defined by "
+                                    "'properties' or 'patternProperties' and additionalProperties "
+                                    " is False", value, fieldname, prop=eachProperty, path=path)
+                    self.__validate(eachProperty, value, additionalProperties, path)
         else:
             raise SchemaError("additionalProperties schema definition for "
-                              "field '%s' is not an object" % fieldname)
+                              "field '{}' is not an object".format(fieldname))
 
-    def validate_dependencies(self, x, fieldname, schema, dependencies=None):
+    def validate_dependencies(self, x, fieldname, schema, path, dependencies=None):
         if x.get(fieldname) is not None:
 
             # handle cases where dependencies is a string or list of strings
@@ -392,26 +365,22 @@ class SchemaValidator(object):
             if isinstance(dependencies, (list, tuple)):
                 for dependency in dependencies:
                     if dependency not in x:
-                        self._error("Field '%(dependency)s' is required by "
-                                    "field '%(fieldname)s'",
-                                    None, fieldname, dependency=dependency)
+                        self._error("Field '{dependency}' is required by field '{fieldname}'",
+                                    None, fieldname, dependency=dependency, path=path,
+                                    exctype=DependencyValidationError)
             elif isinstance(dependencies, dict):
                 # NOTE: the version 3 spec is really unclear on what this means
                 # based on the meta-schema I'm assuming that it should check
                 # that if a key exists, the appropriate value exists
                 for k, v in dependencies.items():
                     if k in x and v not in x:
-                        self._error("Field '%(v)s' is required by field "
-                                    "'%(k)s'", None, fieldname, k=k, v=v)
+                        self._error("Field '{k}' is required by field '{v}'", None, fieldname,
+                                    k=k, v=v, exctype=DependencyValidationError, path=path)
             else:
-                raise SchemaError("'dependencies' must be a string, "
-                                  "list of strings, or dict")
+                raise SchemaError("'dependencies' must be a string, list of strings, or dict")
 
-    def validate_minimum(self, x, fieldname, schema, minimum=None):
-        '''
-        Validates that the field is longer than or equal to the minimum
-        length if specified
-        '''
+    def validate_minimum(self, x, fieldname, schema, path, minimum=None):
+        ''' Validates that the field is longer than or equal to the minimum length if specified '''
 
         exclusive = schema.get('exclusiveMinimum', False)
 
@@ -421,14 +390,12 @@ class SchemaValidator(object):
                 if (type(value) in (int, float) and
                     (not exclusive and value < minimum) or
                         (exclusive and value <= minimum)):
-                    self._error("Value %(value)r for field '%(fieldname)s' is "
-                                "less than minimum value: %(minimum)f",
-                                value, fieldname, minimum=minimum)
+                    self._error("is less than minimum value: {minimum}", value, fieldname,
+                                minimum=minimum, path=path)
 
-    def validate_maximum(self, x, fieldname, schema, maximum=None):
+    def validate_maximum(self, x, fieldname, schema, path, maximum=None):
         '''
-        Validates that the field is shorter than or equal to the maximum
-        length if specified.
+        Validates that the field is shorter than or equal to the maximum length if specified.
         '''
 
         exclusive = schema.get('exclusiveMaximum', False)
@@ -439,61 +406,60 @@ class SchemaValidator(object):
                 if (type(value) in (int, float) and
                     (not exclusive and value > maximum) or
                         (exclusive and value >= maximum)):
-                    self._error("Value %(value)r for field '%(fieldname)s' is "
-                                "greater than maximum value: %(maximum)f",
-                                value, fieldname, maximum=maximum)
+                    self._error("is greater than maximum value: {maximum}", value, fieldname,
+                                maximum=maximum, path=path)
 
-    def validate_maxLength(self, x, fieldname, schema, length=None):
+    def validate_maxLength(self, x, fieldname, schema, path, length=None):
         '''
         Validates that the value of the given field is shorter than or equal
         to the specified length
         '''
         value = x.get(fieldname)
         if isinstance(value, (_str_type, list, tuple)) and len(value) > length:
-            self._error("Length of value %(value)r for field '%(fieldname)s' "
-                        "must be less than or equal to %(length)d",
-                        value, fieldname, length=length)
+            self._error("must have length less than or equal to {length}", value, fieldname,
+                        length=length, path=path)
 
-    def validate_minLength(self, x, fieldname, schema, length=None):
+    def validate_minLength(self, x, fieldname, schema, path, length=None):
         '''
-        Validates that the value of the given field is longer than or equal
-        to the specified length
+        Validates that the value of the given field is longer than or equal to the specified length
         '''
         value = x.get(fieldname)
         if isinstance(value, (_str_type, list, tuple)) and len(value) < length:
-            self._error("Length of value %(value)r for field '%(fieldname)s' "
-                        "must be greater than or equal to %(length)d",
-                        value, fieldname, length=length)
+            self._error("must have length greater than or equal to {length}", value, fieldname,
+                        length=length, path=path)
 
     validate_minItems = validate_minLength
     validate_maxItems = validate_maxLength
 
-    def validate_format(self, x, fieldname, schema, format_option=None):
+    def validate_format(self, x, fieldname, schema, path, format_option=None):
         '''
         Validates the format of primitive data types
         '''
-        value = x.get(fieldname)
+        value = x.get(fieldname, None)
 
         format_validator = self._format_validators.get(format_option, None)
 
-        if format_validator and value:
-            format_validator(self, fieldname, value, format_option)
+        if format_validator and value is not None:
+            try:
+                format_validator(self, fieldname, value, format_option)
+            except FieldValidationError as fve:
+                if self.fail_fast:
+                    raise
+                else:
+                    self._errors.append(fve)
 
         # TODO: warn about unsupported format ?
 
-    def validate_pattern(self, x, fieldname, schema, pattern=None):
+    def validate_pattern(self, x, fieldname, schema, path, pattern=None):
         '''
-        Validates that the given field, if a string, matches the given
-        regular expression.
+        Validates that the given field, if a string, matches the given regular expression.
         '''
         value = x.get(fieldname)
-        if isinstance(value, _str_type):
-            if not re.match(pattern, value):
-                self._error("Value %(value)r for field '%(fieldname)s' does "
-                            "not match regular expression '%(pattern)s'",
-                            value, fieldname, pattern=pattern)
+        if isinstance(value, _str_type) and (isinstance(pattern, _str_type) and not re.match(pattern, value) or not isinstance(pattern, _str_type) and not pattern.match(value)):
+            self._error("does not match regular expression '{pattern}'", value, fieldname,
+                        pattern=pattern, path=path)
 
-    def validate_uniqueItems(self, x, fieldname, schema, uniqueItems=False):
+    def validate_uniqueItems(self, x, fieldname, schema, path, uniqueItems=False):
         '''
         Validates that all items in an array instance MUST be unique
         (contains no two identical values).
@@ -519,118 +485,96 @@ class SchemaValidator(object):
                 container, add = hashables, hashables.add
 
             if value in container:
-                self._error(
-                    "Value %(value)r for field '%(fieldname)s' is not unique",
-                    value, fieldname)
+                self._error("is not unique", value, fieldname, path=path)
             else:
                 add(value)
 
-    def validate_enum(self, x, fieldname, schema, options=None):
+    def validate_enum(self, x, fieldname, schema, path, options=None):
         '''
-        Validates that the value of the field is equal to one of the
-        specified option values
+        Validates that the value of the field is equal to one of the specified option values
         '''
         value = x.get(fieldname)
         if value is not None:
+            if callable(options):
+                options = options(x)
             if not isinstance(options, Container):
-                raise SchemaError("Enumeration %r for field '%s' must be a "
-                                  "container", (options, fieldname))
+                raise SchemaError("Enumeration {!r} for field '{}' must be a container".format(
+                                  options, fieldname))
             if value not in options:
-                self._error("Value %(value)r for field '%(fieldname)s' is not "
-                            "in the enumeration: %(options)r",
-                            value, fieldname, options=options)
+                self._error("is not in the enumeration: {options!r}", value, fieldname,
+                            options=options, path=path)
 
-    def validate_title(self, x, fieldname, schema, title=None):
+    def validate_title(self, x, fieldname, schema, path, title=None):
         if not isinstance(title, (_str_type, type(None))):
-            raise SchemaError("The title for field '%s' must be a string" %
-                              fieldname)
+            raise SchemaError("The title for field '{}' must be a string".format(fieldname))
 
-    def validate_description(self, x, fieldname, schema, description=None):
+    def validate_description(self, x, fieldname, schema, path, description=None):
         if not isinstance(description, (_str_type, type(None))):
-            raise SchemaError("The description for field '%s' must be a string"
-                              % fieldname)
+            raise SchemaError("The description for field '{}' must be a string".format(fieldname))
 
-    def validate_divisibleBy(self, x, fieldname, schema, divisibleBy=None):
+    def validate_divisibleBy(self, x, fieldname, schema, path, divisibleBy=None):
         value = x.get(fieldname)
 
         if not self.validate_type_number(value):
             return
 
         if divisibleBy == 0:
-            raise SchemaError("'%r' <- divisibleBy can not be 0" % schema)
+            raise SchemaError("'{!r}' <- divisibleBy can not be 0".format(schema))
 
         if value % divisibleBy != 0:
-            self._error("Value %(value)r field '%(fieldname)s' is not "
-                        "divisible by '%(divisibleBy)s'.",
-                        x.get(fieldname), fieldname, divisibleBy=divisibleBy)
+            self._error("is not divisible by '{divisibleBy}'.", x.get(fieldname), fieldname,
+                        divisibleBy=divisibleBy, path=path)
 
-    def validate_disallow(self, x, fieldname, schema, disallow=None):
+    def validate_disallow(self, x, fieldname, schema, path, disallow=None):
         '''
-        Validates that the value of the given field does not match the
-        disallowed type.
+        Validates that the value of the given field does not match the disallowed type.
         '''
         try:
-            self.validate_type(x, fieldname, schema, disallow)
+            self.validate_type(x, fieldname, schema, path, disallow)
         except ValidationError:
             return
-        self._error("Value %(value)r of type %(disallow)s is disallowed for "
-                    "field '%(fieldname)s'",
-                    x.get(fieldname), fieldname, disallow=disallow)
+        self._error("is disallowed for field '{fieldname}'", x.get(fieldname), fieldname,
+                    disallow=disallow, path=path)
 
     def validate(self, data, schema):
         '''
         Validates a piece of json data against the provided json-schema.
         '''
-        self._validate(data, schema)
+        self.__validate("data", {"data": data}, schema, '<obj>')
+        if self._errors:
+            raise MultipleValidationError(self._errors)
 
-    def _validate(self, data, schema):
-        self.__validate("_data", {"_data": data}, schema)
-
-    def __validate(self, fieldname, data, schema):
+    def __validate(self, fieldname, data, schema, path):
 
         if schema is not None:
             if not isinstance(schema, dict):
-                raise SchemaError(
-                    "Type for field '%s' must be 'dict', got: '%s'" %
-                    (fieldname, type(schema).__name__))
+                raise SchemaError("Type for field '%s' must be 'dict', got: '%s'" %
+                                  (fieldname, type(schema).__name__))
 
             newschema = copy.copy(schema)
-
-            if 'optional' in schema:
-                raise SchemaError('The "optional" attribute has been replaced'
-                                  ' by "required"')
-            if 'requires' in schema:
-                raise SchemaError('The "requires" attribute has been replaced'
-                                  ' by "dependencies"')
 
             if 'required' not in schema:
                 newschema['required'] = self.required_by_default
             if 'blank' not in schema:
                 newschema['blank'] = self.blank_by_default
 
+            # iterate over schema and call all validators
             for schemaprop in newschema:
-
                 validatorname = "validate_" + schemaprop
-
                 validator = getattr(self, validatorname, None)
                 if validator:
-                    validator(data, fieldname, schema,
-                              newschema.get(schemaprop))
+                    validator(data, fieldname, schema, path, newschema.get(schemaprop))
 
             if self.apply_default_to_data and 'default' in schema:
                 try:
-                    self.validate_type(
-                        x={'_ds': schema['default']},
-                        fieldname='_ds',
-                        schema=schema,
-                        fieldtype=schema['type'] if 'type' in schema else None
-                    )
+                    self.validate_type(x={'_ds': schema['default']}, fieldname='_ds',
+                                       schema=schema,
+                                       fieldtype=schema['type'] if 'type' in schema else None,
+                                       path=path)
                 except FieldValidationError as exc:
                     raise SchemaError(exc)
 
-                if not fieldname in data:
+                if fieldname not in data:
                     data[fieldname] = schema['default']
 
         return data
-
-__all__ = ['SchemaValidator', 'FieldValidationError']

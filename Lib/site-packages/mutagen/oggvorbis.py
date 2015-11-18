@@ -1,5 +1,5 @@
-# Ogg Vorbis support.
-#
+# -*- coding: utf-8 -*-
+
 # Copyright 2006 Joe Wreschnig
 #
 # This program is free software; you can redistribute it and/or modify
@@ -74,7 +74,8 @@ class OggVorbisInfo(StreamInfo):
         self.length = page.position / float(self.sample_rate)
 
     def pprint(self):
-        return u"Ogg Vorbis, %.2f seconds, %d bps" % (self.length, self.bitrate)
+        return u"Ogg Vorbis, %.2f seconds, %d bps" % (
+            self.length, self.bitrate)
 
 
 class OggVCommentDict(VCommentDict):

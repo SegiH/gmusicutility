@@ -1,5 +1,6 @@
-# True Audio support for Mutagen
-# Copyright 2006 Joe Wreschnig
+# -*- coding: utf-8 -*-
+
+# Copyright (C) 2006  Joe Wreschnig
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of version 2 of the GNU General Public License as
@@ -19,10 +20,10 @@ __all__ = ["TrueAudio", "Open", "delete", "EasyTrueAudio"]
 from ._compat import endswith
 from mutagen import StreamInfo
 from mutagen.id3 import ID3FileType, delete
-from mutagen._util import cdata
+from mutagen._util import cdata, MutagenError
 
 
-class error(RuntimeError):
+class error(RuntimeError, MutagenError):
     pass
 
 

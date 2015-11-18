@@ -9,7 +9,9 @@
 import sys
 import locale
 
-from optparse import OptionParser
+from mutagen._toolsutil import SignalHandler, get_win32_unicode_argv, print_, \
+    OptionParser
+from mutagen._compat import text_type
 
 
 def main(argv):
@@ -24,19 +26,18 @@ def main(argv):
     if not args:
         raise SystemExit(parser.print_help() or 1)
 
-    enc = locale.getpreferredencoding() or "utf-8"
     for filename in args:
-        print("--", filename)
+        print_(u"--", filename)
         try:
-            print("- " + File(filename).pprint().encode(enc, 'replace'))
+            print_(u"-", File(filename).pprint())
         except AttributeError:
-            print("- Unknown file type")
-        except KeyboardInterrupt:
-            raise
+            print_(u"- Unknown file type")
         except Exception as err:
-            print(str(err))
-        print
+            print_(text_type(err))
+        print_(u"")
 
 
 if __name__ == "__main__":
-    main(sys.argv)
+    argv = get_win32_unicode_argv()
+    SignalHandler().init()
+    main(argv)

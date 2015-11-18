@@ -13,7 +13,7 @@ See <http://github.com/ActiveState/appdirs> for details and usage.
 # - Mac OS X: http://developer.apple.com/documentation/MacOSX/Conceptual/BPFileSystem/index.html
 # - XDG spec for Un*x: http://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
 
-__version_info__ = (1, 3, 0)
+__version_info__ = (1, 4, 0)
 __version__ = '.'.join(map(str, __version_info__))
 
 
@@ -25,15 +25,32 @@ PY3 = sys.version_info[0] == 3
 if PY3:
     unicode = str
 
+if sys.platform.startswith('java'):
+    import platform
+    os_name = platform.java_ver()[3][0]
+    if os_name.startswith('Windows'): # "Windows XP", "Windows 7", etc.
+        system = 'win32'
+    elif os_name.startswith('Mac'): # "Mac OS X", etc.
+        system = 'darwin'
+    else: # "Linux", "SunOS", "FreeBSD", etc.
+        # Setting this to "linux2" is not ideal, but only Windows or Mac
+        # are actually checked for and the rest of the module expects
+        # *sys.platform* style strings.
+        system = 'linux2'
+else:
+    system = sys.platform
+
+
 
 def user_data_dir(appname=None, appauthor=None, version=None, roaming=False):
     r"""Return full path to the user-specific data dir for this application.
 
         "appname" is the name of application.
             If None, just the system directory is returned.
-        "appauthor" (only required and used on Windows) is the name of the
+        "appauthor" (only used on Windows) is the name of the
             appauthor or distributing body for this application. Typically
-            it is the owning company name. This falls back to appname.
+            it is the owning company name. This falls back to appname. You may
+            pass False to disable it.
         "version" is an optional version path element to append to the
             path. You might want to use this if you want multiple versions
             of your app to be able to run independently. If used, this
@@ -57,14 +74,17 @@ def user_data_dir(appname=None, appauthor=None, version=None, roaming=False):
     For Unix, we follow the XDG spec and support $XDG_DATA_HOME.
     That means, by default "~/.local/share/<AppName>".
     """
-    if sys.platform == "win32":
+    if system == "win32":
         if appauthor is None:
             appauthor = appname
         const = roaming and "CSIDL_APPDATA" or "CSIDL_LOCAL_APPDATA"
         path = os.path.normpath(_get_win_folder(const))
         if appname:
-            path = os.path.join(path, appauthor, appname)
-    elif sys.platform == 'darwin':
+            if appauthor is not False:
+                path = os.path.join(path, appauthor, appname)
+            else:
+                path = os.path.join(path, appname)
+    elif system == 'darwin':
         path = os.path.expanduser('~/Library/Application Support/')
         if appname:
             path = os.path.join(path, appname)
@@ -82,9 +102,10 @@ def site_data_dir(appname=None, appauthor=None, version=None, multipath=False):
 
         "appname" is the name of application.
             If None, just the system directory is returned.
-        "appauthor" (only required and used on Windows) is the name of the
+        "appauthor" (only used on Windows) is the name of the
             appauthor or distributing body for this application. Typically
-            it is the owning company name. This falls back to appname.
+            it is the owning company name. This falls back to appname. You may
+            pass False to disable it.
         "version" is an optional version path element to append to the
             path. You might want to use this if you want multiple versions
             of your app to be able to run independently. If used, this
@@ -107,13 +128,16 @@ def site_data_dir(appname=None, appauthor=None, version=None, multipath=False):
 
     WARNING: Do not use this on Windows. See the Vista-Fail note above for why.
     """
-    if sys.platform == "win32":
+    if system == "win32":
         if appauthor is None:
             appauthor = appname
         path = os.path.normpath(_get_win_folder("CSIDL_COMMON_APPDATA"))
         if appname:
-            path = os.path.join(path, appauthor, appname)
-    elif sys.platform == 'darwin':
+            if appauthor is not False:
+                path = os.path.join(path, appauthor, appname)
+            else:
+                path = os.path.join(path, appname)
+    elif system == 'darwin':
         path = os.path.expanduser('/Library/Application Support')
         if appname:
             path = os.path.join(path, appname)
@@ -144,9 +168,10 @@ def user_config_dir(appname=None, appauthor=None, version=None, roaming=False):
 
         "appname" is the name of application.
             If None, just the system directory is returned.
-        "appauthor" (only required and used on Windows) is the name of the
+        "appauthor" (only used on Windows) is the name of the
             appauthor or distributing body for this application. Typically
-            it is the owning company name. This falls back to appname.
+            it is the owning company name. This falls back to appname. You may
+            pass False to disable it.
         "version" is an optional version path element to append to the
             path. You might want to use this if you want multiple versions
             of your app to be able to run independently. If used, this
@@ -167,7 +192,7 @@ def user_config_dir(appname=None, appauthor=None, version=None, roaming=False):
     For Unix, we follow the XDG spec and support $XDG_CONFIG_HOME.
     That means, by deafult "~/.config/<AppName>".
     """
-    if sys.platform in ["win32", "darwin"]:
+    if system in ["win32", "darwin"]:
         path = user_data_dir(appname, appauthor, None, roaming)
     else:
         path = os.getenv('XDG_CONFIG_HOME', os.path.expanduser("~/.config"))
@@ -183,9 +208,10 @@ def site_config_dir(appname=None, appauthor=None, version=None, multipath=False)
 
         "appname" is the name of application.
             If None, just the system directory is returned.
-        "appauthor" (only required and used on Windows) is the name of the
+        "appauthor" (only used on Windows) is the name of the
             appauthor or distributing body for this application. Typically
-            it is the owning company name. This falls back to appname.
+            it is the owning company name. This falls back to appname. You may
+            pass False to disable it.
         "version" is an optional version path element to append to the
             path. You might want to use this if you want multiple versions
             of your app to be able to run independently. If used, this
@@ -207,7 +233,7 @@ def site_config_dir(appname=None, appauthor=None, version=None, multipath=False)
 
     WARNING: Do not use this on Windows. See the Vista-Fail note above for why.
     """
-    if sys.platform in ["win32", "darwin"]:
+    if system in ["win32", "darwin"]:
         path = site_data_dir(appname, appauthor)
         if appname and version:
             path = os.path.join(path, version)
@@ -233,9 +259,10 @@ def user_cache_dir(appname=None, appauthor=None, version=None, opinion=True):
 
         "appname" is the name of application.
             If None, just the system directory is returned.
-        "appauthor" (only required and used on Windows) is the name of the
+        "appauthor" (only used on Windows) is the name of the
             appauthor or distributing body for this application. Typically
-            it is the owning company name. This falls back to appname.
+            it is the owning company name. This falls back to appname. You may
+            pass False to disable it.
         "version" is an optional version path element to append to the
             path. You might want to use this if you want multiple versions
             of your app to be able to run independently. If used, this
@@ -260,15 +287,18 @@ def user_cache_dir(appname=None, appauthor=None, version=None, opinion=True):
     OPINION: This function appends "Cache" to the `CSIDL_LOCAL_APPDATA` value.
     This can be disabled with the `opinion=False` option.
     """
-    if sys.platform == "win32":
+    if system == "win32":
         if appauthor is None:
             appauthor = appname
         path = os.path.normpath(_get_win_folder("CSIDL_LOCAL_APPDATA"))
         if appname:
-            path = os.path.join(path, appauthor, appname)
+            if appauthor is not False:
+                path = os.path.join(path, appauthor, appname)
+            else:
+                path = os.path.join(path, appname)
             if opinion:
                 path = os.path.join(path, "Cache")
-    elif sys.platform == 'darwin':
+    elif system == 'darwin':
         path = os.path.expanduser('~/Library/Caches')
         if appname:
             path = os.path.join(path, appname)
@@ -286,9 +316,10 @@ def user_log_dir(appname=None, appauthor=None, version=None, opinion=True):
 
         "appname" is the name of application.
             If None, just the system directory is returned.
-        "appauthor" (only required and used on Windows) is the name of the
+        "appauthor" (only used on Windows) is the name of the
             appauthor or distributing body for this application. Typically
-            it is the owning company name. This falls back to appname.
+            it is the owning company name. This falls back to appname. You may
+            pass False to disable it.
         "version" is an optional version path element to append to the
             path. You might want to use this if you want multiple versions
             of your app to be able to run independently. If used, this
@@ -312,11 +343,11 @@ def user_log_dir(appname=None, appauthor=None, version=None, opinion=True):
     value for Windows and appends "log" to the user cache dir for Unix.
     This can be disabled with the `opinion=False` option.
     """
-    if sys.platform == "darwin":
+    if system == "darwin":
         path = os.path.join(
             os.path.expanduser('~/Library/Logs'),
             appname)
-    elif sys.platform == "win32":
+    elif system == "win32":
         path = user_data_dir(appname, appauthor, version)
         version = False
         if opinion:
@@ -358,7 +389,7 @@ class AppDirs(object):
 
     @property
     def site_config_dir(self):
-        return site_data_dir(self.appname, self.appauthor,
+        return site_config_dir(self.appname, self.appauthor,
                              version=self.version, multipath=self.multipath)
 
     @property
@@ -448,16 +479,46 @@ def _get_win_folder_with_ctypes(csidl_name):
 
     return buf.value
 
-if sys.platform == "win32":
+def _get_win_folder_with_jna(csidl_name):
+    import array
+    from com.sun import jna
+    from com.sun.jna.platform import win32
+
+    buf_size = win32.WinDef.MAX_PATH * 2
+    buf = array.zeros('c', buf_size)
+    shell = win32.Shell32.INSTANCE
+    shell.SHGetFolderPath(None, getattr(win32.ShlObj, csidl_name), None, win32.ShlObj.SHGFP_TYPE_CURRENT, buf)
+    dir = jna.Native.toString(buf.tostring()).rstrip("\0")
+
+    # Downgrade to short path name if have highbit chars. See
+    # <http://bugs.activestate.com/show_bug.cgi?id=85099>.
+    has_high_char = False
+    for c in dir:
+        if ord(c) > 255:
+            has_high_char = True
+            break
+    if has_high_char:
+        buf = array.zeros('c', buf_size)
+        kernel = win32.Kernel32.INSTANCE
+        if kernal.GetShortPathName(dir, buf, buf_size):
+            dir = jna.Native.toString(buf.tostring()).rstrip("\0")
+
+    return dir
+
+if system == "win32":
     try:
         import win32com.shell
         _get_win_folder = _get_win_folder_with_pywin32
     except ImportError:
         try:
-            import ctypes
+            from ctypes import windll
             _get_win_folder = _get_win_folder_with_ctypes
         except ImportError:
-            _get_win_folder = _get_win_folder_from_registry
+            try:
+                import com.sun.jna
+                _get_win_folder = _get_win_folder_with_jna
+            except ImportError:
+                _get_win_folder = _get_win_folder_from_registry
 
 
 #---- self test code
@@ -482,5 +543,10 @@ if __name__ == "__main__":
 
     print("\n-- app dirs (without optional 'appauthor')")
     dirs = AppDirs(appname)
+    for prop in props:
+        print("%s: %s" % (prop, getattr(dirs, prop)))
+
+    print("\n-- app dirs (with disabled 'appauthor')")
+    dirs = AppDirs(appname, appauthor=False)
     for prop in props:
         print("%s: %s" % (prop, getattr(dirs, prop)))

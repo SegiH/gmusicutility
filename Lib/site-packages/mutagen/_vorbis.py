@@ -1,6 +1,7 @@
-# Vorbis comment support for Mutagen
-# Copyright 2005-2006 Joe Wreschnig
-#           2013 Christoph Reiter
+# -*- coding: utf-8 -*-
+
+# Copyright (C) 2005-2006  Joe Wreschnig
+#                    2013  Christoph Reiter
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of version 2 of the GNU General Public License as
@@ -32,7 +33,7 @@ def is_valid_key(key):
     """
 
     if PY3 and isinstance(key, bytes):
-        raise ValueError
+        raise TypeError("needs to be str not bytes")
 
     for c in key:
         if c < " " or c > "}" or c == "=":
@@ -127,7 +128,8 @@ class VComment(mutagen.Metadata, list):
                         tag = tag.decode("ascii")
                     if is_valid_key(tag):
                         self.append((tag, value))
-            if framing and not ord(fileobj.read(1)) & 0x01:
+
+            if framing and not bytearray(fileobj.read(1))[0] & 0x01:
                 raise VorbisUnsetFrameError("framing bit was unset")
         except (cdata.error, TypeError):
             raise error("file is not a valid Vorbis comment")
@@ -142,17 +144,10 @@ class VComment(mutagen.Metadata, list):
         In Python 3 all keys and values have to be a string.
         """
 
-        # be stricter in Python 3
-        if PY3:
-            if not isinstance(self.vendor, text_type):
-                raise ValueError
-            for key, value in self:
-                if not isinstance(key, text_type):
-                    raise ValueError
-                if not isinstance(value, text_type):
-                    raise ValueError
-
         if not isinstance(self.vendor, text_type):
+            if PY3:
+                raise ValueError("vendor needs to be str")
+
             try:
                 self.vendor.decode('utf-8')
             except UnicodeDecodeError:
@@ -162,16 +157,19 @@ class VComment(mutagen.Metadata, list):
             try:
                 if not is_valid_key(key):
                     raise ValueError
-            except:
+            except TypeError:
                 raise ValueError("%r is not a valid key" % key)
 
             if not isinstance(value, text_type):
+                if PY3:
+                    raise ValueError("%r needs to be str" % key)
+
                 try:
-                    value.encode("utf-8")
+                    value.decode("utf-8")
                 except:
                     raise ValueError("%r is not a valid value" % value)
-        else:
-            return True
+
+        return True
 
     def clear(self):
         """Clear all keys from the comment."""
@@ -244,6 +242,10 @@ class VCommentDict(VComment, DictMixin):
         work.
         """
 
+        # PY3 only
+        if isinstance(key, slice):
+            return VComment.__getitem__(self, key)
+
         if not is_valid_key(key):
             raise ValueError
 
@@ -257,6 +259,10 @@ class VCommentDict(VComment, DictMixin):
 
     def __delitem__(self, key):
         """Delete all values associated with the key."""
+
+        # PY3 only
+        if isinstance(key, slice):
+            return VComment.__delitem__(self, key)
 
         if not is_valid_key(key):
             raise ValueError
@@ -289,6 +295,10 @@ class VCommentDict(VComment, DictMixin):
         list of Unicode or UTF-8 strings, or a single Unicode or UTF-8
         string.
         """
+
+        # PY3 only
+        if isinstance(key, slice):
+            return VComment.__setitem__(self, key, values)
 
         if not is_valid_key(key):
             raise ValueError

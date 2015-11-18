@@ -1,4 +1,6 @@
-# Copyright 2006 Joe Wreschnig
+# -*- coding: utf-8 -*-
+
+# Copyright (C) 2006  Joe Wreschnig
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 2 as
@@ -15,12 +17,19 @@ import codecs
 
 from fnmatch import fnmatchcase
 
-from ._compat import chr_, text_type, PY2, iteritems, iterbytes
+from ._compat import chr_, PY2, iteritems, iterbytes, integer_types, xrange
+
+
+class MutagenError(Exception):
+    """Base class for all custom exceptions in mutagen
+
+    .. versionadded:: 1.25
+    """
 
 
 def total_ordering(cls):
-    assert hasattr(cls, "__eq__")
-    assert hasattr(cls, "__lt__")
+    assert "__eq__" in cls.__dict__
+    assert "__lt__" in cls.__dict__
 
     cls.__le__ = lambda self, other: self == other or self < other
     cls.__gt__ = lambda self, other: not (self == other or self < other)
@@ -28,6 +37,48 @@ def total_ordering(cls):
     cls.__ne__ = lambda self, other: not self.__eq__(other)
 
     return cls
+
+
+def hashable(cls):
+    """Makes sure the class is hashable.
+
+    Needs a working __eq__ and __hash__ and will add a __ne__.
+    """
+
+    # py2
+    assert "__hash__" in cls.__dict__
+    # py3
+    assert cls.__dict__["__hash__"] is not None
+    assert "__eq__" in cls.__dict__
+
+    cls.__ne__ = lambda self, other: not self.__eq__(other)
+
+    return cls
+
+
+def enum(cls):
+    assert cls.__bases__ == (object,)
+
+    d = dict(cls.__dict__)
+    new_type = type(cls.__name__, (int,), d)
+    new_type.__module__ = cls.__module__
+
+    map_ = {}
+    for key, value in iteritems(d):
+        if key.upper() == key and isinstance(value, integer_types):
+            value_instance = new_type(value)
+            setattr(new_type, key, value_instance)
+            map_[value] = key
+
+    def repr_(self):
+        if self in map_:
+            return "%s.%s" % (type(self).__name__, map_[self])
+        else:
+            return "%s(%s)" % (type(self).__name__, self)
+
+    setattr(new_type, "__repr__", repr_)
+
+    return new_type
 
 
 @total_ordering
@@ -62,17 +113,20 @@ class DictMixin(object):
 
     __contains__ = __has_key
 
-    iterkeys = lambda self: iter(self.keys())
+    if PY2:
+        iterkeys = lambda self: iter(self.keys())
 
     def values(self):
         return [self[k] for k in self.keys()]
 
-    itervalues = lambda self: iter(self.values())
+    if PY2:
+        itervalues = lambda self: iter(self.values())
 
     def items(self):
         return list(zip(self.keys(), self.values()))
 
-    iteritems = lambda s: iter(s.items())
+    if PY2:
+        iteritems = lambda s: iter(s.items())
 
     def clear(self):
         for key in list(self.keys()):
@@ -156,59 +210,61 @@ class DictProxy(DictMixin):
         return self.__dict.keys()
 
 
+def _fill_cdata(cls):
+    """Add struct pack/unpack functions"""
+
+    funcs = {}
+    for key, name in [("b", "char"), ("h", "short"),
+                      ("i", "int"), ("q", "longlong")]:
+        for echar, esuffix in [("<", "le"), (">", "be")]:
+            esuffix = "_" + esuffix
+            for unsigned in [True, False]:
+                s = struct.Struct(echar + (key.upper() if unsigned else key))
+                get_wrapper = lambda f: lambda *a, **k: f(*a, **k)[0]
+                unpack = get_wrapper(s.unpack)
+                unpack_from = get_wrapper(s.unpack_from)
+
+                def get_unpack_from(s):
+                    def unpack_from(data, offset=0):
+                        return s.unpack_from(data, offset)[0], offset + s.size
+                    return unpack_from
+
+                unpack_from = get_unpack_from(s)
+                pack = s.pack
+
+                prefix = "u" if unsigned else ""
+                if s.size == 1:
+                    esuffix = ""
+                bits = str(s.size * 8)
+                funcs["%s%s%s" % (prefix, name, esuffix)] = unpack
+                funcs["%sint%s%s" % (prefix, bits, esuffix)] = unpack
+                funcs["%s%s%s_from" % (prefix, name, esuffix)] = unpack_from
+                funcs["%sint%s%s_from" % (prefix, bits, esuffix)] = unpack_from
+                funcs["to_%s%s%s" % (prefix, name, esuffix)] = pack
+                funcs["to_%sint%s%s" % (prefix, bits, esuffix)] = pack
+
+    for key, func in iteritems(funcs):
+        setattr(cls, key, staticmethod(func))
+
+
 class cdata(object):
-    """C character buffer to Python numeric type conversions."""
+    """C character buffer to Python numeric type conversions.
+
+    For each size/sign/endianness:
+    uint32_le(data)/to_uint32_le(num)/uint32_le_from(data, offset=0)
+    """
 
     from struct import error
     error = error
 
-    short_le = staticmethod(lambda data: struct.unpack('<h', data)[0])
-    ushort_le = staticmethod(lambda data: struct.unpack('<H', data)[0])
-
-    short_be = staticmethod(lambda data: struct.unpack('>h', data)[0])
-    ushort_be = staticmethod(lambda data: struct.unpack('>H', data)[0])
-
-    int_le = staticmethod(lambda data: struct.unpack('<i', data)[0])
-    uint_le = staticmethod(lambda data: struct.unpack('<I', data)[0])
-
-    int_be = staticmethod(lambda data: struct.unpack('>i', data)[0])
-    uint_be = staticmethod(lambda data: struct.unpack('>I', data)[0])
-
-    longlong_le = staticmethod(lambda data: struct.unpack('<q', data)[0])
-    ulonglong_le = staticmethod(lambda data: struct.unpack('<Q', data)[0])
-
-    longlong_be = staticmethod(lambda data: struct.unpack('>q', data)[0])
-    ulonglong_be = staticmethod(lambda data: struct.unpack('>Q', data)[0])
-
-    to_short_le = staticmethod(lambda data: struct.pack('<h', data))
-    to_ushort_le = staticmethod(lambda data: struct.pack('<H', data))
-
-    to_short_be = staticmethod(lambda data: struct.pack('>h', data))
-    to_ushort_be = staticmethod(lambda data: struct.pack('>H', data))
-
-    to_int_le = staticmethod(lambda data: struct.pack('<i', data))
-    to_uint_le = staticmethod(lambda data: struct.pack('<I', data))
-
-    to_int_be = staticmethod(lambda data: struct.pack('>i', data))
-    to_uint_be = staticmethod(lambda data: struct.pack('>I', data))
-
-    to_longlong_le = staticmethod(lambda data: struct.pack('<q', data))
-    to_ulonglong_le = staticmethod(lambda data: struct.pack('<Q', data))
-
-    to_longlong_be = staticmethod(lambda data: struct.pack('>q', data))
-    to_ulonglong_be = staticmethod(lambda data: struct.pack('>Q', data))
-
-    bitswap = b''.join([chr_(sum([((val >> i) & 1) << (7-i)
-                        for i in range(8)]))
-                        for val in range(256)])
-
-    try:
-        del(i)
-        del(val)
-    except NameError:
-        pass
+    bitswap = b''.join(
+        chr_(sum(((val >> i) & 1) << (7 - i) for i in range(8)))
+        for val in range(256))
 
     test_bit = staticmethod(lambda value, n: bool((value >> n) & 1))
+
+
+_fill_cdata(cdata)
 
 
 def lock(fileobj):
@@ -252,7 +308,7 @@ def unlock(fileobj):
     fcntl.lockf(fileobj, fcntl.LOCK_UN)
 
 
-def insert_bytes(fobj, size, offset, BUFFER_SIZE=2**16):
+def insert_bytes(fobj, size, offset, BUFFER_SIZE=2 ** 16):
     """Insert size bytes of empty space starting at offset.
 
     fobj must be an open file object, open rb+ or
@@ -271,11 +327,11 @@ def insert_bytes(fobj, size, offset, BUFFER_SIZE=2**16):
     try:
         try:
             import mmap
-            map = mmap.mmap(fobj.fileno(), filesize + size)
+            file_map = mmap.mmap(fobj.fileno(), filesize + size)
             try:
-                map.move(offset + size, offset, movesize)
+                file_map.move(offset + size, offset, movesize)
             finally:
-                map.close()
+                file_map.close()
         except (ValueError, EnvironmentError, ImportError):
             # handle broken mmap scenarios
             locked = lock(fobj)
@@ -314,7 +370,7 @@ def insert_bytes(fobj, size, offset, BUFFER_SIZE=2**16):
             unlock(fobj)
 
 
-def delete_bytes(fobj, size, offset, BUFFER_SIZE=2**16):
+def delete_bytes(fobj, size, offset, BUFFER_SIZE=2 ** 16):
     """Delete size bytes of empty space starting at offset.
 
     fobj must be an open file object, open rb+ or
@@ -334,11 +390,11 @@ def delete_bytes(fobj, size, offset, BUFFER_SIZE=2**16):
             fobj.flush()
             try:
                 import mmap
-                map = mmap.mmap(fobj.fileno(), filesize)
+                file_map = mmap.mmap(fobj.fileno(), filesize)
                 try:
-                    map.move(offset, offset + size, movesize)
+                    file_map.move(offset, offset + size, movesize)
                 finally:
-                    map.close()
+                    file_map.close()
             except (ValueError, EnvironmentError, ImportError):
                 # handle broken mmap scenarios
                 locked = lock(fobj)
@@ -357,21 +413,14 @@ def delete_bytes(fobj, size, offset, BUFFER_SIZE=2**16):
             unlock(fobj)
 
 
-def utf8(data):
-    """Convert a basestring to a valid UTF-8 str."""
-
-    if isinstance(data, bytes):
-        return data.decode("utf-8", "replace").encode("utf-8")
-    elif isinstance(data, text_type):
-        return data.encode("utf-8")
-    else:
-        raise TypeError("only unicode/str types can be converted to UTF-8")
-
-
 def dict_match(d, key, default=None):
-    try:
+    """Like __getitem__ but works as if the keys() are all filename patterns.
+    Returns the value of any dict key that matches the passed key.
+    """
+
+    if key in d and "[" not in key:
         return d[key]
-    except KeyError:
+    else:
         for pattern, value in iteritems(d):
             if fnmatchcase(key, pattern):
                 return value
@@ -420,3 +469,93 @@ def decode_terminated(data, encoding, strict=True):
         if strict:
             raise ValueError("not null terminated")
         return u"".join(r), b""
+
+
+class BitReaderError(Exception):
+    pass
+
+
+class BitReader(object):
+
+    def __init__(self, fileobj):
+        self._fileobj = fileobj
+        self._buffer = 0
+        self._bits = 0
+        self._pos = fileobj.tell()
+
+    def bits(self, count):
+        """Reads `count` bits and returns an uint, MSB read first.
+
+        May raise BitReaderError if not enough data could be read or
+        IOError by the underlying file object.
+        """
+
+        if count < 0:
+            raise ValueError
+
+        if count > self._bits:
+            n_bytes = (count - self._bits + 7) // 8
+            data = self._fileobj.read(n_bytes)
+            if len(data) != n_bytes:
+                raise BitReaderError("not enough data")
+            for b in bytearray(data):
+                self._buffer = (self._buffer << 8) | b
+            self._bits += n_bytes * 8
+
+        self._bits -= count
+        value = self._buffer >> self._bits
+        self._buffer &= (1 << self._bits) - 1
+        assert self._bits < 8
+        return value
+
+    def bytes(self, count):
+        """Returns a bytearray of length `count`. Works unaligned."""
+
+        if count < 0:
+            raise ValueError
+
+        # fast path
+        if self._bits == 0:
+            data = self._fileobj.read(count)
+            if len(data) != count:
+                raise BitReaderError("not enough data")
+            return data
+
+        return bytes(bytearray(self.bits(8) for _ in xrange(count)))
+
+    def skip(self, count):
+        """Skip `count` bits.
+
+        Might raise BitReaderError if there wasn't enough data to skip,
+        but might also fail on the next bits() instead.
+        """
+
+        if count < 0:
+            raise ValueError
+
+        if count <= self._bits:
+            self.bits(count)
+        else:
+            count -= self.align()
+            n_bytes = count // 8
+            self._fileobj.seek(n_bytes, 1)
+            count -= n_bytes * 8
+            self.bits(count)
+
+    def get_position(self):
+        """Returns the amount of bits read or skipped so far"""
+
+        return (self._fileobj.tell() - self._pos) * 8 - self._bits
+
+    def align(self):
+        """Align to the next byte, returns the amount of bits skipped"""
+
+        bits = self._bits
+        self._buffer = 0
+        self._bits = 0
+        return bits
+
+    def is_aligned(self):
+        """If we are currently aligned to bytes and nothing is buffered"""
+
+        return self._bits == 0

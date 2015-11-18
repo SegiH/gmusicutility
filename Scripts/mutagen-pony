@@ -9,6 +9,8 @@ import os
 import sys
 import traceback
 
+from mutagen._toolsutil import SignalHandler, get_win32_unicode_argv, print_
+
 
 class Report(object):
     def __init__(self, pathname):
@@ -75,14 +77,10 @@ class Report(object):
 
 
 def check_dir(path):
-    from mutagen.id3 import ID3
     from mutagen.mp3 import MP3
 
-    class ID3Custom(ID3):
-        PEDANTIC = False
-
     rep = Report(path)
-    print("Scanning", path)
+    print_(u"Scanning", path)
     for path, dirs, files in os.walk(path):
         files.sort()
         for fn in files:
@@ -90,9 +88,7 @@ def check_dir(path):
                 continue
             ffn = os.path.join(path, fn)
             try:
-                mp3 = MP3(ffn, ID3=ID3Custom)
-            except KeyboardInterrupt:
-                raise
+                mp3 = MP3(ffn)
             except Exception:
                 rep.error(ffn)
             else:
@@ -101,16 +97,18 @@ def check_dir(path):
                 else:
                     rep.success(mp3.tags)
 
-    print(str(rep))
+    print_(str(rep))
 
 
 def main(argv):
     if len(argv) == 1:
-        print("Usage: %s directory ..." % argv[0])
+        print_(u"Usage:", argv[0], u"directory ...")
     else:
         for path in argv[1:]:
             check_dir(path)
 
 
 if __name__ == "__main__":
-    main(sys.argv)
+    argv = get_win32_unicode_argv()
+    SignalHandler().init()
+    main(argv)

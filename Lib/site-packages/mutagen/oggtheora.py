@@ -1,5 +1,5 @@
-# Ogg Theora support.
-#
+# -*- coding: utf-8 -*-
+
 # Copyright 2006 Joe Wreschnig
 #
 # This program is free software; you can redistribute it and/or modify
@@ -119,7 +119,7 @@ class OggTheora(OggFileType):
     @staticmethod
     def score(filename, fileobj, header):
         return (header.startswith(b"OggS") *
-                ((b"\x80theora" in header) + (b"\x81theora" in header)))
+                ((b"\x80theora" in header) + (b"\x81theora" in header)) * 2)
 
 
 Open = OggTheora

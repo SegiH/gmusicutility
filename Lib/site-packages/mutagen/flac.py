@@ -1,5 +1,6 @@
-# FLAC comment support for Mutagen
-# Copyright 2005 Joe Wreschnig
+# -*- coding: utf-8 -*-
+
+# Copyright (C) 2005  Joe Wreschnig
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of version 2 of the GNU General Public License as
@@ -26,14 +27,12 @@ from ._vorbis import VCommentDict
 import mutagen
 
 from ._compat import cBytesIO, endswith, chr_
-from mutagen._util import insert_bytes
+from mutagen._util import insert_bytes, MutagenError
 from mutagen.id3 import BitPaddedInt
-import sys
-if sys.version_info >= (2, 6):
-    from functools import reduce
+from functools import reduce
 
 
-class error(IOError):
+class error(IOError, MutagenError):
     pass
 
 
@@ -45,10 +44,10 @@ class FLACVorbisError(ValueError, error):
     pass
 
 
-def to_int_be(string):
+def to_int_be(data):
     """Convert an arbitrarily-long string to a long using big-endian
     byte order."""
-    return reduce(lambda a, b: (a << 8) + b, bytearray(string), 0)
+    return reduce(lambda a, b: (a << 8) + b, bytearray(data), 0)
 
 
 class StrictFileObject(object):
@@ -112,7 +111,7 @@ class MetadataBlock(object):
         codes[-1][0] |= 128
         for code, datum in codes:
             byte = chr_(code)
-            if len(datum) > 2**24:
+            if len(datum) > 2 ** 24:
                 raise error("block is too long to write")
             length = struct.pack(">I", len(datum))[-3:]
             data.append(byte + length + datum)
@@ -131,7 +130,7 @@ class MetadataBlock(object):
             blocks.remove(p)
         # total padding size is the sum of padding sizes plus 4 bytes
         # per removed header.
-        size = sum([padding.length for padding in paddings])
+        size = sum(padding.length for padding in paddings)
         padding = Padding()
         padding.length = size + 4 * (len(paddings) - 1)
         blocks.append(padding)
@@ -382,10 +381,10 @@ class CueSheetTrack(object):
     __hash__ = object.__hash__
 
     def __repr__(self):
-        return ("<%s number=%r, offset=%d, isrc=%r, type=%r, "
-                "pre_emphasis=%r, indexes=%r)>") % (
-                    type(self).__name__, self.track_number, self.start_offset,
-                    self.isrc, self.type, self.pre_emphasis, self.indexes)
+        return (("<%s number=%r, offset=%d, isrc=%r, type=%r, "
+                "pre_emphasis=%r, indexes=%r)>") %
+                (type(self).__name__, self.track_number, self.start_offset,
+                 self.isrc, self.type, self.pre_emphasis, self.indexes))
 
 
 class CueSheet(MetadataBlock):
@@ -484,10 +483,10 @@ class CueSheet(MetadataBlock):
         return f.getvalue()
 
     def __repr__(self):
-        return ("<%s media_catalog_number=%r, lead_in=%r, compact_disc=%r, "
-                "tracks=%r>") % (
-                    type(self).__name__, self.media_catalog_number,
-                    self.lead_in_samples, self.compact_disc, self.tracks)
+        return (("<%s media_catalog_number=%r, lead_in=%r, compact_disc=%r, "
+                 "tracks=%r>") %
+                (type(self).__name__, self.media_catalog_number,
+                 self.lead_in_samples, self.compact_disc, self.tracks))
 
 
 class Picture(MetadataBlock):
@@ -504,6 +503,21 @@ class Picture(MetadataBlock):
     * colors -- number of colors for indexed palettes (like GIF),
       0 for non-indexed
     * data -- picture data
+
+    To create a picture from file (in order to add to a FLAC file),
+    instantiate this object without passing anything to the constructor and
+    then set the properties manually::
+
+        p = Picture()
+
+        with open("Folder.jpg", "rb") as f:
+            pic.data = f.read()
+
+        pic.type = APICType.COVER_FRONT
+        pic.mime = u"image/jpeg"
+        pic.width = 500
+        pic.height = 500
+        pic.depth = 16 # color depth
     """
 
     code = 6
@@ -619,8 +633,8 @@ class FLAC(mutagen.FileType):
     """Known metadata block types, indexed by ID."""
 
     @staticmethod
-    def score(filename, fileobj, header):
-        return (header.startswith(b"fLaC") +
+    def score(filename, fileobj, header_data):
+        return (header_data.startswith(b"fLaC") +
                 endswith(filename.lower(), ".flac") * 3)
 
     def __read_metadata_block(self, fileobj):

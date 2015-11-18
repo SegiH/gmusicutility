@@ -1,4 +1,6 @@
-# Copyright 2013 Christoph Reiter
+# -*- coding: utf-8 -*-
+
+# Copyright (C) 2013  Christoph Reiter
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of version 2 of the GNU General Public License as
@@ -36,10 +38,10 @@ if PY2:
     exec("def reraise(tp, value, tb):\n raise tp, value, tb")
 
     def swap_to_string(cls):
-        if hasattr(cls, '__str__'):
+        if "__str__" in cls.__dict__:
             cls.__unicode__ = cls.__str__
 
-        if hasattr(cls, '__bytes__'):
+        if "__bytes__" in cls.__dict__:
             cls.__str__ = cls.__bytes__
 
         return cls

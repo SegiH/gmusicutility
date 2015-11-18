@@ -64,6 +64,16 @@ def validate_format_contains_spaces(validator, fieldname, value,
         "but it should" % locals(), fieldname, value)
 
 
+def validate_format_dict_not_empty(validator, fieldname, value,
+                               format_option):
+    if len(value.keys()) > 0:
+        return
+
+    raise validictory.FieldValidationError(
+        "Value %(value)r of field '%(fieldname)s' should not be an empty"
+        "dict" % locals(), fieldname, value)
+
+
 class TestFormat(TestCase):
 
     schema_datetime = {"format": "date-time"}
@@ -72,6 +82,7 @@ class TestFormat(TestCase):
     schema_utcmillisec = {"format": "utc-millisec"}
     schema_ip = {"format": "ip-address"}
     schema_spaces = {"format": "spaces"}
+    schema_non_empty_dict = {"type": "object", "format": "non-empty-dict"}
 
     def test_format_datetime_pass(self):
         data = "2011-01-13T10:56:53Z"
@@ -124,6 +135,11 @@ class TestFormat(TestCase):
 
     def test_format_datetime_fail(self):
         data = "whatever"
+        self.assertRaises(ValueError, validictory.validate, data,
+                          self.schema_datetime)
+
+    def test_format_datetime_bad_type(self):
+        data = 3
         self.assertRaises(ValueError, validictory.validate, data,
                           self.schema_datetime)
 
@@ -219,6 +235,15 @@ class TestFormat(TestCase):
         self.assertRaises(ValueError, validator.validate, data,
                           self.schema_spaces)
 
+    def test_format_non_empty_fail(self):
+        data = {}
+
+        validator = validictory.SchemaValidator(
+            {'non-empty-dict': validate_format_dict_not_empty})
+
+        self.assertRaises(ValueError, validator.validate, data,
+                          self.schema_non_empty_dict)
+
 
 class TestUniqueItems(TestCase):
 
@@ -310,9 +335,9 @@ class TestMaximum(TestCase):
     schema_exclusive = {"type": "object", "properties": props_exclusive}
 
     def test_maximum_pass(self):
-        #Test less than
+        # Test less than
         data1 = {"prop01": 5, "prop02": 10}
-        #Test equal
+        # Test equal
         data2 = {"prop01": 10, "prop02": 20}
 
         try:
@@ -322,7 +347,7 @@ class TestMaximum(TestCase):
             self.fail("Unexpected failure: %s" % e)
 
     def test_maximum_exclusive_pass(self):
-        #Test less than
+        # Test less than
         data = {"prop": 19}
 
         try:
@@ -331,16 +356,16 @@ class TestMaximum(TestCase):
             self.fail("Unexpected failure: %s" % e)
 
     def test_maximum_fail(self):
-        #Test number
+        # Test number
         data1 = {"prop01": 11, "prop02": 19}
-        #Test integer
+        # Test integer
         data2 = {"prop01": 9, "prop02": 21}
 
         self.assertRaises(ValueError, validictory.validate, data1, self.schema)
         self.assertRaises(ValueError, validictory.validate, data2, self.schema)
 
     def test_maximum_exclusive_fail(self):
-        #Test equal
+        # Test equal
         data = {"prop": 20}
 
         self.assertRaises(ValueError, validictory.validate, data,
@@ -359,9 +384,9 @@ class TestMinimum(TestCase):
     schema_exclusive = {"type": "object", "properties": props_exclusive}
 
     def test_minimum_pass(self):
-        #Test greater than
+        # Test greater than
         data1 = {"prop01": 21, "prop02": 21}
-        #Test equal
+        # Test equal
         data2 = {"prop01": 10, "prop02": 20}
 
         try:
@@ -371,7 +396,7 @@ class TestMinimum(TestCase):
             self.fail("Unexpected failure: %s" % e)
 
     def test_minimum_exclusive_pass(self):
-        #Test greater than
+        # Test greater than
         data = {"prop": 21}
 
         try:
@@ -380,16 +405,16 @@ class TestMinimum(TestCase):
             self.fail("Unexpected failure: %s" % e)
 
     def test_minimum_fail(self):
-        #Test number
+        # Test number
         data1 = {"prop01": 9, "prop02": 21}
-        #Test integer
+        # Test integer
         data2 = {"prop01": 10, "prop02": 19}
 
         self.assertRaises(ValueError, validictory.validate, data1, self.schema)
         self.assertRaises(ValueError, validictory.validate, data2, self.schema)
 
     def test_minimum_exclusive_fail(self):
-        #Test equal
+        # Test equal
         data = {"prop": 20}
 
         self.assertRaises(ValueError, validictory.validate, data,
@@ -410,7 +435,7 @@ class TestMinLength(TestCase):
             self.fail("Unexpected failure: %s" % e)
 
     def test_minLength_pass_nonstring(self):
-        #test when data is not a string
+        # test when data is not a string
         data1 = 123
 
         try:
@@ -419,7 +444,7 @@ class TestMinLength(TestCase):
             self.fail("Unexpected failure: %s" % e)
 
     def test_minLength_fail(self):
-        #test equal
+        # test equal
         data = ["car", [1, 2, 3]]
 
         for item in data:
