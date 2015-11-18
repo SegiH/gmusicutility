@@ -1,5 +1,7 @@
 This is my Python based application that lets you perform many tasks with your Google Play Music library and playlists which you cannot do in the web interface. 
 
+Please visit my website http://apps.hovav.org/google-play-music-utility for full installation and usage instructions.
+
 I have tested and run my application on Windows, Linux and OS X/
 
 Some of the features you can do with my application:
