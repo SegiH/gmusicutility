@@ -21,4 +21,4 @@ Any function that lets you save a file has the option to either save the file lo
 
 In addition to these features, you can perform all of the functions above using command line arguments and customize the color coding when exporting a file as HTML .
 
-The application has a built-in update checker which will let you know when it has been updated and prompt you to open a browser window to get the latest version.
+The application has a built-in update checker which will let you know when an update is available and will prompt you to open a browser window to download the update.
