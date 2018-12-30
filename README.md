@@ -14,8 +14,10 @@ This app currently supports the following features:
      Find Duplicate Tracks in Playlist: Compare 2 playlists and create CSV with tracks that are in both playlists
      Rename a playlist
 
-     Export all songs in your GPM library as CSV or HTML and save file locally or DropBox.
+     Export a list of all purchased songs in your GPM library as CSV or HTML and save file locally or DropBox.
+     Export a list of all songs in your GPM library as CSV or HTML and save file locally or DropBox.
      View recently added music - Pick and date and see all tracks added since that date. Results can be saved as CSV
+     Automatically checks for updates when using the UI (You can use /checkforupdates to check for an update from the command line) 
 
      Command line arguments to perform all of the above steps automatically from the command line.
 
@@ -26,7 +28,7 @@ This app is available as native binaries for Windows and Mac or as a Python scri
 If you do not want to use the native binaries for your operating system and want to manually run the Python script, 
 you need to follow the instructions below.
 
-1. Windows and Mac users: Install Python. This app has been tested with Python 2 & 3.
+1. Windows and Mac users: Install Python. This app will only work Python 3 or with Python 2 and the package PySide2 installed (Installing PySide2 is a hit or miss in Python 2).
    Python can download be from here https://www.python.org/downloads/ The latest version is 3.7.2. Choose the right installer for your O.S.
    
    Linux users: Python 2 or 3 should be installed already on most Linux distribution and shouldn't need to be manually installed.
@@ -57,6 +59,8 @@ you need to follow the instructions below.
           c. mutagen 
           d. pyaes 
           e. PySide2
+          f. requests
+          g. Slugify
       
       Note: Run this command exactly like this: pip install dropbox gmusicapi mutagen pyaes PySide2
             to install all of the packages at once or you can did pip install package1 pip install package2 etc.
@@ -90,6 +94,8 @@ Options & Customization
 Some of the features that this app uses can be customized by editing gMusicUtility.py and changing the appropriate variables. 
 Do not change anything below the line that says ### DO NOT EDIT ANYTHING BELOW THIS LINE
 
+checkForUpdates = True - Change to False to disable automatic update checking
+
 tableForegroundColor - Change HTML table foreground color. Color must be provided as hexadecimal. Ex: tableForegroundColor = "#000000" will set the foreground color to black
 
 tableBackgroundColor - Change HTML table background color. Color must be provided as hexadecimal. Ex: tableBackgroundColor = "#FFFFFF" will set the background color to white
@@ -105,10 +111,17 @@ Native application
 If you want to, you can create a native application (I.E an Exe on Windows, a Mac binary for Mac or a native Linux binary) for your operating system
 to create the same binaries made available on my Github page by following these steps: (Note: You can only create binaries for the platform that you are on. So if you are on Windows you can only create exe.)
      1. Install pyinstaller using pip: pip install pyinstaller
-     2. Run pyinstaller gMusicUtility40.py and wait. This still waill take about a minute.
+     2. Run pyinstaller gMusicUtility40.py (Windows users need to type scripts\pyinstaller) and wait. This still waill take about a minute.
      3. cd dist/gMusicUtility40 and run ./gmusicutility40. If you have already logged into Google and/or DropBox before, copy all the files with the extension cred into this directory.
 
 Known issues
 ------------
-If you try to cancel before completing the OAuth session, you have to Ctrl C to end the script. Sometimes you have to force quit the command prompt/terminal.
-If you see an error "Could not find a suitable TLA CA certificate bundle, Invalid Path", download the file cacert.pem from my Github page and put it in the same folder as gMusicUtility.exe
+1. If you try to cancel before completing the OAuth session, you have to Ctrl C to end the script. Sometimes you have to force quit the command prompt/terminal.
+2. If you see an error "Could not find a suitable TLA CA certificate bundle, Invalid Path", you are missing the file cacert.pem. Download this file from my Github 
+   page and put it in the same folder as the gMusicUtility binary. 
+3. I have seen an issue that comes from Google's side when logging in that says "HTTPSConnectionPool(host='mclients.googleapis.com', port=443): Max retries exceeded with url:   
+   /sj/v2.5/config?hl=en_US&dv=0&tier=fr (Caused by SSLError(SSLError(0, 'unknown error (_ssl.c:4045)')))" This is how Google limits a lot of connections from the same IP Address. Do not keep trying to log in again. Wait and try again later.
+4. If you see an error that says dropbox.exceptions.AuthError: AuthError('ff3ffd437a309af8d75f923e4d8e21f2', AuthError(u'invalid_access_token', None)), delete DropBoxOAuth.cred and    
+   authorize DropBox again.
+5. When specifying a path when using the command line arguments, use an absolute path (especially on Linux) like /home/someusers/Desktop/allplaylists instead of a relative path like 
+   ./allplaylists because relative paths cause an issue when downloading all songs in a playlist where the m3u file might not be generated.
