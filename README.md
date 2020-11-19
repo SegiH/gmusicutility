@@ -1,3 +1,6 @@
+Note: Google Play Music is shutting down. as a result, I will not be working on this app any more
+
+
 gMusicUtility is a Python based app that lets you do things with your Google Play Music Library that you wouldn't be able to do otherwise. 
 This app wouldn't be possible without this unofficial Google Play Music API available at https://github.com/simon-weber/gmusicapi developed by Simon Weber. 
 
